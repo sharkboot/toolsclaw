@@ -87,28 +87,31 @@ def _ensure_venv(skill: Skill) -> bool:
         return True
 
     venv_dir = skill.venv_dir
+    pip_exe = venv_dir / ("Scripts/pip.exe" if sys.platform == "win32" else "bin/pip")
 
-    # create venv if it doesn't exist
-    if not venv_dir.is_dir():
+    # create venv if it doesn't exist or pip is missing
+    if not venv_dir.is_dir() or not pip_exe.exists():
         try:
+            if venv_dir.is_dir():
+                import shutil
+                shutil.rmtree(venv_dir)
             subprocess.run(
                 [sys.executable, "-m", "venv", str(venv_dir)],
                 check=True,
                 capture_output=True,
             )
-        except subprocess.CalledProcessError as e:
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
             print(f"[toolsclaw] Failed to create venv for skill '{skill.name}': {e}")
             return False
 
     # install dependencies
-    pip_exe = str(venv_dir / ("Scripts/pip.exe" if sys.platform == "win32" else "bin/pip"))
     try:
         subprocess.run(
-            [pip_exe, "install", "-q", *skill.requires.pip],
+            [str(pip_exe), "install", "-q", *skill.requires.pip],
             check=True,
             capture_output=True,
         )
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"[toolsclaw] Failed to install deps for skill '{skill.name}': {e}")
         return False
 

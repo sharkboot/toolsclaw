@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from toolsclaw.config import Config, load_config
+from toolsclaw.config import Config, ProviderConfig, load_config
 from toolsclaw.hook import AgentHook, CompositeHook, SDKCaptureHook
 from toolsclaw.runner import AgentRunner
 
@@ -72,6 +72,9 @@ class ToolsClaw:
         *,
         workspace: str | Path | None = None,
         skills_dir: str | Path | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        api_base: str | None = None,
     ) -> ToolsClaw:
         """Create a ToolsClaw instance from a config file.
 
@@ -83,11 +86,25 @@ class ToolsClaw:
             skills_dir: Extra skills directory to load in addition to
                 workspace/skills and builtin skills. Skills in this
                 directory take priority over builtin skills.
+            model: Model name (e.g. ``"mimo-v2.5-pro"``). Overrides config.
+            api_key: API key. Overrides config.
+            api_base: API base URL. Overrides config.
         """
         config = load_config(Path(config_path) if config_path else None)
 
         if workspace is not None:
             config.workspace = str(Path(workspace).expanduser().resolve())
+
+        # apply model / provider overrides
+        if model is not None:
+            config.model = model
+        if api_key is not None or api_base is not None:
+            existing = config.get_provider_config()
+            config.providers["default"] = ProviderConfig(
+                api_key=api_key or existing.api_key,
+                api_base=api_base or existing.api_base,
+            )
+            config.provider = "default"
 
         runner = AgentRunner(
             config,
