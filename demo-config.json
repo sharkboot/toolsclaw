@@ -1,0 +1,26 @@
+{
+  "model": "mimo-v2.5-pro",
+  "provider": "mimo",
+  "workspace": "./demo-workspace",
+  "sandbox": true,
+  "providers": {
+    "mimo": {
+      "api_key": "tp-cs2e4t11jxi81aaxnjm6gkbk3fa67n6ux4s9fxnb2k0ekckg",
+      "api_base": "https://token-plan-cn.xiaomimimo.com/v1"
+    }
+  },
+  "exec": {
+    "enable": true,
+    "timeout": 30,
+    "deny_patterns": [
+      "rm\\s+-rf\\s+/",
+      "del\\s+/[fFsS]\\s+[a-zA-Z]:\\\\",
+      "format\\s+[a-zA-Z]:",
+      "mkfs\\.",
+      "dd\\s+if=",
+      ":\\(\\)\\{.*\\|.*&\\s*\\};",
+      "shutdown",
+      "reboot"
+    ]
+  }
+}

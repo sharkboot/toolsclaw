@@ -1,0 +1,26 @@
+[project]
+name = "toolsclaw"
+version = "0.1.0"
+description = "Ultra-lightweight tool-calling agent framework"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "toolsclaw contributors"}]
+
+dependencies = [
+    "openai>=1.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+toolsclaw = "toolsclaw.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = ["toolsclaw/**/*.py", "skills/**/*.md"]
