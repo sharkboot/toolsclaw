@@ -131,16 +131,5 @@ class ExecTool(Tool):
             return f"Error: {e}"
 
     def _build_env(self) -> dict[str, str]:
-        """Build a minimal environment for subprocess execution."""
-        env: dict[str, str] = {}
-        if sys.platform == "win32":
-            for key in ["SYSTEMROOT", "TEMP", "TMP", "PATH", "PATHEXT", "COMSPEC"]:
-                val = os.environ.get(key)
-                if val:
-                    env[key] = val
-        else:
-            for key in ["HOME", "LANG", "TERM", "PATH"]:
-                val = os.environ.get(key)
-                if val:
-                    env[key] = val
-        return env
+        """Build environment for subprocess execution — inherit full parent env."""
+        return dict(os.environ)

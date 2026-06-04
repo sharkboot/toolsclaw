@@ -1,8 +1,9 @@
-"""Agent runner — the core LLM ↔ tool execution loop."""
+"""Agent runner - the core LLM tool execution loop."""
 
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,7 @@ from toolsclaw.tools import ExecTool, ListDirTool, ReadFileTool, RunScriptTool, 
 # resolve the built-in skills directory (sibling of the package)
 _BUILTIN_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
 
-MAX_ITERATIONS = 50
+MAX_ITERATIONS = 100
 SYSTEM_PROMPT = """\
 You are a helpful AI assistant with access to tools for file operations and shell execution.
 Always use tools when the user asks you to do something that requires reading/writing files or running commands.
@@ -94,17 +95,25 @@ class AgentRunner:
         """Assemble the system prompt with skills."""
         parts = [SYSTEM_PROMPT]
 
-        # inject always-on skills
+        # inject always-on skills with {SKILL_DIR} replaced
         always = get_always_skills(self._skills)
         if always:
             parts.append("# Active Skills")
             for s in always:
-                parts.append(s.content)
+                skill_dir = str(s.path.parent.resolve())
+                content = s.content.replace("{SKILL_DIR}", skill_dir)
+                parts.append(content)
 
         # inject skills summary
         summary = build_skills_summary(self._skills)
         if summary:
             parts.append(summary)
+
+        # inject all skill directories for reference
+        for s in self._skills:
+            if s.available:
+                skill_dir = str(s.path.parent.resolve())
+                parts.append(f"Skill '{s.name}' directory: {skill_dir}")
 
         parts.append(f"Workspace: {self._workspace}")
         return "\n\n".join(parts)
@@ -130,11 +139,11 @@ class AgentRunner:
 
             # no tool calls → final answer
             if not response.has_tool_calls:
-                context.final_content = response.content
+                final = response.content
                 if self._hook:
                     await self._hook.after_iteration(context)
-                    response.content = self._hook.finalize_content(context, response.content) or response.content
-                return response.content
+                    final = self._hook.finalize_content(context, final) or final
+                return final or "(Agent completed without generating a response.)"
 
             # append assistant message with tool calls
             assistant_msg: dict[str, Any] = {"role": "assistant", "content": response.content or None}
@@ -158,8 +167,17 @@ class AgentRunner:
             # execute each tool call and append results
             tool_results: list[str] = []
             for tc in response.tool_calls:
-                console.print(f"  [dim]⚙ {tc.name}[/dim]")
+                args_preview = str(tc.arguments)[:200]
+                console.print(f"  [bold blue]CALL {tc.name}[/bold blue]({args_preview})")
                 result = await self._registry.execute(tc.name, tc.arguments)
+                # use print() with errors='replace' to avoid encoding issues on Windows
+                result_preview = (result[:300].replace("\n", " ") if result else "(empty)")
+                try:
+                    print(f"    -> {result_preview}")
+                except UnicodeEncodeError:
+                    enc = sys.stdout.encoding or "utf-8"
+                    safe = result_preview.encode(enc, errors="replace").decode(enc, errors="replace")
+                    print(f"    -> {safe}")
                 tool_results.append(result)
                 messages.append({
                     "role": "tool",
@@ -177,7 +195,7 @@ class AgentRunner:
 
     async def run_interactive(self) -> None:
         """Run an interactive chat session."""
-        console.print("[bold green]toolsclaw[/bold green] — interactive mode (type 'exit' to quit)")
+        console.print("[bold green]toolsclaw[/bold green] - interactive mode (type 'exit' to quit)")
         console.print(f"Workspace: {self._workspace}\n")
 
         messages: list[dict[str, Any]] = [
@@ -239,7 +257,7 @@ class AgentRunner:
 
                 tool_results: list[str] = []
                 for tc in response.tool_calls:
-                    console.print(f"  [dim]⚙ {tc.name}[/dim]")
+                    console.print(f"  [dim]CALL {tc.name}[/dim]")
                     result = await self._registry.execute(tc.name, tc.arguments)
                     tool_results.append(result)
                     messages.append({

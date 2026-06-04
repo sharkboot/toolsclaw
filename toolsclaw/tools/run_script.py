@@ -17,6 +17,7 @@ class RunScriptTool(Tool):
     def __init__(self, workspace: Path, skills: list[Skill], timeout: int = 120) -> None:
         self._workspace = workspace.resolve()
         self._skills = {s.name: s for s in skills if s.available}
+        self._skill_dirs = [s.path.parent.resolve() for s in skills]
         self._timeout = min(timeout, 600)
 
     @property
@@ -76,9 +77,20 @@ class RunScriptTool(Tool):
         if inline:
             cmd = [python_exe, "-c", script, *args]
         else:
-            script_path = self._workspace / script
-            if not script_path.exists():
-                return f"Error: script not found: {script}"
+            script_path = Path(script)
+            if script_path.is_absolute() and script_path.exists():
+                pass  # use as-is
+            elif (self._workspace / script).exists():
+                script_path = self._workspace / script
+            else:
+                # search skill directories
+                for skill_dir in self._skill_dirs:
+                    candidate = skill_dir / script
+                    if candidate.exists():
+                        script_path = candidate
+                        break
+                else:
+                    return f"Error: script not found: {script} (searched workspace and skill dirs)"
             cmd = [python_exe, str(script_path), *args]
 
         try:
