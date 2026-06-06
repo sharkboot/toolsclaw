@@ -20,7 +20,7 @@ from toolsclaw.skills import (
     load_skills,
 )
 from toolsclaw.tool import Tool, ToolRegistry
-from toolsclaw.tools import ExecTool, ListDirTool, ReadFileTool, RunScriptTool, WriteFileTool
+from toolsclaw.tools import ExecTool, ListDirTool, LoadSkillTool, ReadFileTool, RunScriptTool, WriteFileTool
 
 # resolve the built-in skills directory (sibling of the package)
 _BUILTIN_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
@@ -78,6 +78,10 @@ class AgentRunner:
         self._registry.register(WriteFileTool(ws))
         self._registry.register(ListDirTool(ws))
 
+        # register load_skill for progressive skill loading
+        if self._skills:
+            self._registry.register(LoadSkillTool(self._skills))
+
         if ec.enable:
             self._registry.register(
                 ExecTool(
@@ -92,24 +96,39 @@ class AgentRunner:
             self._registry.register(RunScriptTool(ws, self._skills, timeout=ec.timeout * 2))
 
     def _build_system_prompt(self) -> str:
-        """Assemble the system prompt with skills."""
+        """Assemble the system prompt with progressive skill loading.
+
+        Progressive disclosure pattern (3 levels):
+        1. Always-on skills: full SKILL.md body injected directly
+        2. Other skills: name + description + path in summary (agent reads on demand)
+        3. Bundled resources: agent reads referenced scripts/assets as needed
+        """
         parts = [SYSTEM_PROMPT]
 
-        # inject always-on skills with {SKILL_DIR} replaced
+        # Level 1: inject always-on skills with {SKILL_DIR} replaced
         always = get_always_skills(self._skills)
         if always:
-            parts.append("# Active Skills")
+            parts.append("# Active Skills\n")
             for s in always:
                 skill_dir = str(s.path.parent.resolve())
                 content = s.content.replace("{SKILL_DIR}", skill_dir)
                 parts.append(content)
 
-        # inject skills summary
+        # Level 2: inject skills summary with progressive loading instructions
         summary = build_skills_summary(self._skills)
         if summary:
-            parts.append(summary)
+            parts.append(
+                "# Skills\n\n"
+                "The following skills extend your capabilities. To use a skill, "
+                "call the `load_skill` tool with the skill name. The skill file "
+                "contains detailed instructions and scripts you can execute.\n\n"
+                "When the user's request matches a skill's description, load it "
+                "immediately before proceeding.\n\n"
+                "Unavailable skills need dependencies installed first.\n\n"
+                f"{summary}"
+            )
 
-        # inject all skill directories for reference
+        # Level 3: inject skill directories for subresource access
         for s in self._skills:
             if s.available:
                 skill_dir = str(s.path.parent.resolve())

@@ -216,10 +216,16 @@ def get_always_skills(skills: list[Skill]) -> list[Skill]:
 
 
 def build_skills_summary(skills: list[Skill]) -> str:
-    """Build a markdown summary of available skills."""
+    """Build a markdown summary of available skills.
+
+    The summary is designed for progressive disclosure:
+    - Always-on skills have their full content injected separately
+    - Other skills show name + description for quick matching
+    - Agent uses load_skill tool to load full content on demand
+    """
     if not skills:
         return ""
-    lines = ["## Available Skills", ""]
+    lines = []
     for s in skills:
         if not s.available:
             continue
