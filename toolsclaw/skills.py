@@ -18,10 +18,10 @@ Each skill can declare dependencies in its frontmatter:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import shutil
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -78,7 +78,7 @@ def _check_env(env_vars: list[str]) -> list[str]:
     return [v for v in env_vars if not os.environ.get(v)]
 
 
-def _ensure_venv(skill: Skill) -> bool:
+async def _ensure_venv(skill: Skill) -> bool:
     """Create the per-skill venv and install pip deps if needed.
 
     Returns True on success, False on failure.
@@ -93,25 +93,30 @@ def _ensure_venv(skill: Skill) -> bool:
     if not venv_dir.is_dir() or not pip_exe.exists():
         try:
             if venv_dir.is_dir():
-                import shutil
                 shutil.rmtree(venv_dir)
-            subprocess.run(
-                [sys.executable, "-m", "venv", str(venv_dir)],
-                check=True,
-                capture_output=True,
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "venv", str(venv_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            _, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                raise RuntimeError(stderr.decode(errors="replace"))
+        except (RuntimeError, FileNotFoundError, OSError) as e:
             print(f"[toolsclaw] Failed to create venv for skill '{skill.name}': {e}")
             return False
 
     # install dependencies
     try:
-        subprocess.run(
-            [str(pip_exe), "install", "-q", *skill.requires.pip],
-            check=True,
-            capture_output=True,
+        proc = await asyncio.create_subprocess_exec(
+            str(pip_exe), "install", "-q", *skill.requires.pip,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(stderr.decode(errors="replace"))
+    except (RuntimeError, FileNotFoundError, OSError) as e:
         print(f"[toolsclaw] Failed to install deps for skill '{skill.name}': {e}")
         return False
 
@@ -198,16 +203,22 @@ def load_skills(
     return skills
 
 
-def ensure_skill_deps(skills: list[Skill]) -> None:
+async def ensure_skill_deps(skills: list[Skill]) -> None:
     """Ensure all pip dependencies are installed for skills that need them.
 
     Call this once after loading skills. Each skill's venv is created lazily
     only if the skill declares `requires.pip` and is otherwise available.
+    Skills with pip dependencies are processed in parallel.
     """
-    for skill in skills:
-        if skill.available and skill.requires.pip:
-            if not _ensure_venv(skill):
-                skill.available = False
+    pip_skills = [s for s in skills if s.available and s.requires.pip]
+    if not pip_skills:
+        return
+
+    async def _try_ensure(skill: Skill) -> None:
+        if not await _ensure_venv(skill):
+            skill.available = False
+
+    await asyncio.gather(*(_try_ensure(s) for s in pip_skills))
 
 
 def get_always_skills(skills: list[Skill]) -> list[Skill]:

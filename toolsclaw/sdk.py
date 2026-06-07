@@ -40,6 +40,18 @@ class RunResult:
     messages: list[dict[str, Any]]
     """Full message history (system + user + assistant + tool messages)."""
 
+    prompt_tokens: int = 0
+    """Total prompt tokens consumed across all LLM calls."""
+
+    completion_tokens: int = 0
+    """Total completion tokens consumed across all LLM calls."""
+
+    total_tokens: int = 0
+    """Total tokens consumed across all LLM calls."""
+
+    iterations: int = 0
+    """Number of LLM round-trips."""
+
 
 class ToolsClaw:
     """Programmatic facade for running the toolsclaw agent.
@@ -156,8 +168,13 @@ class ToolsClaw:
         finally:
             self._runner._hook = prev_hook
 
+        usage = self._runner._last_run_usage
         return RunResult(
             content=content,
             tools_used=capture.tools_used,
             messages=capture.messages,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            iterations=usage.iterations,
         )

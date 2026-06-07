@@ -35,6 +35,30 @@ Be concise and direct in your responses.
 console = Console()
 
 
+class _TokenAccumulator:
+    """Accumulates token usage across multiple LLM calls."""
+
+    __slots__ = ("prompt_tokens", "completion_tokens", "total_tokens", "iterations")
+
+    def __init__(self) -> None:
+        self.prompt_tokens: int = 0
+        self.completion_tokens: int = 0
+        self.total_tokens: int = 0
+        self.iterations: int = 0
+
+    def add(self, prompt: int, completion: int, total: int) -> None:
+        self.prompt_tokens += prompt
+        self.completion_tokens += completion
+        self.total_tokens += total
+        self.iterations += 1
+
+    def reset(self) -> None:
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.total_tokens = 0
+        self.iterations = 0
+
+
 class AgentRunner:
     """Runs the tool-calling agent loop.
 
@@ -57,6 +81,8 @@ class AgentRunner:
         self._provider = LLMProvider(config)
         self._registry = ToolRegistry()
         self._hook = hook
+        self._deps_ready = False
+        self._last_run_usage = _TokenAccumulator()
 
         # resolve skills directories
         builtin = _BUILTIN_SKILLS_DIR
@@ -66,7 +92,6 @@ class AgentRunner:
         else:
             self._skills = load_skills(self._workspace, builtin)
 
-        ensure_skill_deps(self._skills)
         self._register_tools()
 
     def _register_tools(self) -> None:
@@ -94,6 +119,18 @@ class AgentRunner:
         # register run_script if any skill has pip dependencies
         if any(s.available and s.requires.pip for s in self._skills):
             self._registry.register(RunScriptTool(ws, self._skills, timeout=ec.timeout * 2))
+
+    async def _ensure_deps(self) -> None:
+        """Lazily ensure skill dependencies are ready (async, runs once)."""
+        if self._deps_ready:
+            return
+        self._deps_ready = True
+        await ensure_skill_deps(self._skills)
+        # re-register run_script in case skills became available after deps installed
+        if any(s.available and s.requires.pip for s in self._skills):
+            ec = self._config.exec
+            if not self._registry.get("run_script"):
+                self._registry.register(RunScriptTool(self._workspace, self._skills, timeout=ec.timeout * 2))
 
     def _build_system_prompt(self) -> str:
         """Assemble the system prompt with progressive skill loading.
@@ -139,6 +176,8 @@ class AgentRunner:
 
     async def run(self, user_message: str) -> str:
         """Run a single user message through the agent loop. Returns the final response."""
+        await self._ensure_deps()
+        self._last_run_usage.reset()
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self._build_system_prompt()},
             {"role": "user", "content": user_message},
@@ -153,6 +192,8 @@ class AgentRunner:
                 await self._hook.before_iteration(context)
 
             response = await self._provider.chat(messages, tools)
+            u = response.usage
+            self._last_run_usage.add(u.prompt_tokens, u.completion_tokens, u.total_tokens)
             context.response = response
             context.tool_calls = list(response.tool_calls)
 
@@ -214,6 +255,7 @@ class AgentRunner:
 
     async def run_interactive(self) -> None:
         """Run an interactive chat session."""
+        await self._ensure_deps()
         console.print("[bold green]toolsclaw[/bold green] - interactive mode (type 'exit' to quit)")
         console.print(f"Workspace: {self._workspace}\n")
 

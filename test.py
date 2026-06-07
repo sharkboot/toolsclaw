@@ -1,8 +1,11 @@
 import asyncio
 import sys
+import time
 from toolsclaw import ToolsClaw
 
 async def main():
+    t_start = time.perf_counter()
+
     agent = ToolsClaw.from_config(
         workspace="./my-project",
         skills_dir=r"E:\LLM\toolsclaw\my-project\skill",
@@ -17,6 +20,9 @@ async def main():
 
     result = await agent.run("使用相关技能将工作目录下的2602.12670v3.pdf转换为ppt")
 
+    t_end = time.perf_counter()
+    elapsed = t_end - t_start
+
     print("\n" + "=" * 60)
     print("FINAL RESULT")
     print("=" * 60)
@@ -25,7 +31,16 @@ async def main():
         print(content)
     except UnicodeEncodeError:
         print(content.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8", errors="replace"))
-    print(f"\n工具调用: {result.tools_used}")
-    print(f"消息数量: {len(result.messages)}")
+
+    print("\n" + "=" * 60)
+    print("STATS")
+    print("=" * 60)
+    print(f"LLM 轮次:       {result.iterations}")
+    print(f"Prompt tokens:  {result.prompt_tokens:,}")
+    print(f"Completion:     {result.completion_tokens:,}")
+    print(f"Total tokens:   {result.total_tokens:,}")
+    print(f"工具调用:       {result.tools_used}")
+    print(f"消息数量:       {len(result.messages)}")
+    print(f"总耗时:         {elapsed:.2f}s")
 
 asyncio.run(main())

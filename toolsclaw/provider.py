@@ -21,12 +21,22 @@ class ToolCallRequest:
 
 
 @dataclass
+class TokenUsage:
+    """Token usage from a single LLM call."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+@dataclass
 class LLMResponse:
     """Unified LLM response."""
 
     content: str = ""
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
     finish_reason: str = ""
+    usage: TokenUsage = field(default_factory=TokenUsage)
 
     @property
     def has_tool_calls(self) -> bool:
@@ -75,8 +85,17 @@ class LLMProvider:
                     ToolCallRequest(id=tc.id, name=tc.function.name, arguments=args)
                 )
 
+        usage = TokenUsage()
+        if resp.usage:
+            usage = TokenUsage(
+                prompt_tokens=resp.usage.prompt_tokens or 0,
+                completion_tokens=resp.usage.completion_tokens or 0,
+                total_tokens=resp.usage.total_tokens or 0,
+            )
+
         return LLMResponse(
             content=content,
             tool_calls=tool_calls,
             finish_reason=choice.finish_reason or "",
+            usage=usage,
         )
