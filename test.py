@@ -10,7 +10,7 @@ async def main():
         workspace="./my-project",
         skills_dir=r"E:\LLM\toolsclaw\my-project\skill",
         model="mimo-v2.5-pro",
-        api_key="tp-cs2e4t11jxi81aaxnjm6gkbk3fa67n6ux4s9fxnb2k0ekckg",
+        api_key="tp-cs2e4t11xnb2k0ekckg",
         api_base="https://token-plan-cn.xiaomimimo.com/v1",
     )
 
