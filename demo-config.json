@@ -5,7 +5,7 @@
   "sandbox": true,
   "providers": {
     "mimo": {
-      "api_key": "tp-cs2e4t11jxi81aaxnjm6gkbk3fa67n6ux4s9fxnb2k0ekckg",
+      "api_key": "tp-cs2e4t11jxi81aaxnjg",
       "api_base": "https://token-plan-cn.xiaomimimo.com/v1"
     }
   },
