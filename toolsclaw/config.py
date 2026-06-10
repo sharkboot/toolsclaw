@@ -40,6 +40,7 @@ class Config(BaseModel):
     provider: str = "auto"
     workspace: str = ""
     sandbox: bool = True
+    max_iterations: int = 100
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
     exec: ExecConfig = Field(default_factory=ExecConfig)
 

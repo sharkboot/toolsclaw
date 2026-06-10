@@ -25,7 +25,6 @@ from toolsclaw.tools import ExecTool, ListDirTool, LoadSkillTool, ReadFileTool, 
 # resolve the built-in skills directory (sibling of the package)
 _BUILTIN_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
 
-MAX_ITERATIONS = 100
 SYSTEM_PROMPT = """\
 You are a helpful AI assistant with access to tools for file operations and shell execution.
 Always use tools when the user asks you to do something that requires reading/writing files or running commands.
@@ -184,7 +183,7 @@ class AgentRunner:
         ]
         tools = self._registry.get_definitions()
 
-        for i in range(MAX_ITERATIONS):
+        for i in range(self._config.max_iterations):
             context = AgentHookContext(iteration=i, messages=messages)
 
             # before_iteration hook
@@ -279,7 +278,7 @@ class AgentRunner:
 
             messages.append({"role": "user", "content": user_input})
 
-            for i in range(MAX_ITERATIONS):
+            for i in range(self._config.max_iterations):
                 context = AgentHookContext(iteration=i, messages=messages)
 
                 if self._hook:

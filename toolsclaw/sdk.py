@@ -87,6 +87,7 @@ class ToolsClaw:
         model: str | None = None,
         api_key: str | None = None,
         api_base: str | None = None,
+        max_iterations: int | None = None,
     ) -> ToolsClaw:
         """Create a ToolsClaw instance from a config file.
 
@@ -101,6 +102,7 @@ class ToolsClaw:
             model: Model name (e.g. ``"mimo-v2.5-pro"``). Overrides config.
             api_key: API key. Overrides config.
             api_base: API base URL. Overrides config.
+            max_iterations: Maximum number of LLM round-trips. Overrides config.
         """
         config = load_config(Path(config_path) if config_path else None)
 
@@ -117,6 +119,9 @@ class ToolsClaw:
                 api_base=api_base or existing.api_base,
             )
             config.provider = "default"
+
+        if max_iterations is not None:
+            config.max_iterations = max_iterations
 
         runner = AgentRunner(
             config,
