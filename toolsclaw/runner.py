@@ -225,6 +225,7 @@ class AgentRunner:
 
             # execute each tool call and append results
             tool_results: list[str] = []
+            tool_errors: list[str] = []
             for tc in response.tool_calls:
                 args_preview = str(tc.arguments)[:200]
                 console.print(f"  [bold blue]CALL {tc.name}[/bold blue]({args_preview})")
@@ -238,6 +239,8 @@ class AgentRunner:
                     safe = result_preview.encode(enc, errors="replace").decode(enc, errors="replace")
                     print(f"    -> {safe}")
                 tool_results.append(result)
+                if result.startswith("Error"):
+                    tool_errors.append(result)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
@@ -245,6 +248,7 @@ class AgentRunner:
                 })
 
             context.tool_results = tool_results
+            context.tool_errors = tool_errors
 
             # after_iteration hook
             if self._hook:
@@ -316,10 +320,13 @@ class AgentRunner:
                     await self._hook.before_execute_tools(context)
 
                 tool_results: list[str] = []
+                tool_errors: list[str] = []
                 for tc in response.tool_calls:
                     console.print(f"  [dim]CALL {tc.name}[/dim]")
                     result = await self._registry.execute(tc.name, tc.arguments)
                     tool_results.append(result)
+                    if result.startswith("Error"):
+                        tool_errors.append(result)
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
@@ -327,6 +334,7 @@ class AgentRunner:
                     })
 
                 context.tool_results = tool_results
+                context.tool_errors = tool_errors
                 if self._hook:
                     await self._hook.after_iteration(context)
             else:

@@ -22,6 +22,7 @@ class AgentHookContext:
     response: LLMResponse | None = None
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
     tool_results: list[str] = field(default_factory=list)
+    tool_errors: list[str] = field(default_factory=list)
     final_content: str | None = None
 
 
