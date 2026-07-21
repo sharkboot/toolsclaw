@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 from toolsclaw.config import Config, ProviderConfig, load_config
 from toolsclaw.hook import AgentHook, CompositeHook, SDKCaptureHook
@@ -183,3 +183,41 @@ class ToolsClaw:
             total_tokens=usage.total_tokens,
             iterations=usage.iterations,
         )
+
+    async def stream_run(
+        self,
+        message: str,
+        *,
+        hooks: list[AgentHook] | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream the agent's response incrementally.
+
+        Args:
+            message: The user message to process.
+            hooks: Optional lifecycle hooks for this run.
+
+        Yields:
+            String chunks of the assistant's response content in real-time.
+
+        Usage::
+
+            async for chunk in agent.stream_run("Hello"):
+                print(chunk, end="", flush=True)
+        """
+        capture = SDKCaptureHook()
+
+        all_hooks: list[AgentHook] = [capture]
+        if hooks:
+            all_hooks.extend(hooks)
+        if self._runner._hook:
+            all_hooks.append(self._runner._hook)
+
+        composite = CompositeHook(all_hooks) if len(all_hooks) > 1 else all_hooks[0]
+
+        prev_hook = self._runner._hook
+        self._runner._hook = composite
+        try:
+            async for chunk in self._runner.stream_run(message):
+                yield chunk
+        finally:
+            self._runner._hook = prev_hook

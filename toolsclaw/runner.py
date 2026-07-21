@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 from rich.console import Console
 
@@ -255,6 +255,110 @@ class AgentRunner:
                 await self._hook.after_iteration(context)
 
         return "Error: maximum tool iterations reached."
+
+    async def stream_run(self, user_message: str) -> AsyncIterator[str]:
+        """Stream a single user message, yielding incremental response content.
+
+        Yields the assistant's response content in real-time chunks.
+        Tool execution is still non-streamed (runs silently between chunks).
+
+        Usage::
+
+            async for chunk in runner.stream_run("Hello"):
+                print(chunk, end="", flush=True)
+        """
+        from typing import AsyncIterator as AI
+
+        await self._ensure_deps()
+        self._last_run_usage.reset()
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": self._build_system_prompt()},
+            {"role": "user", "content": user_message},
+        ]
+        tools = self._registry.get_definitions()
+
+        for i in range(self._config.max_iterations):
+            context = AgentHookContext(iteration=i, messages=messages)
+
+            if self._hook:
+                await self._hook.before_iteration(context)
+
+            content_chunks: list[str] = []
+            async for chunk_resp in self._provider.stream_chat(messages, tools):
+                if chunk_resp.content:
+                    # only yield NEW content (difference from last chunk)
+                    new_content = chunk_resp.content[len("".join(content_chunks)):]
+                    if new_content:
+                        content_chunks.append(new_content)
+                        yield new_content
+                if chunk_resp.finish_reason:
+                    context.response = chunk_resp
+
+            # finalize usage
+            if context.response:
+                u = context.response.usage
+                self._last_run_usage.add(u.prompt_tokens, u.completion_tokens, u.total_tokens)
+
+            # check if we got tool calls in the last streamed response
+            last_response = context.response
+            if not last_response or not last_response.has_tool_calls:
+                final = last_response.content if last_response else ""
+                if self._hook:
+                    await self._hook.after_iteration(context)
+                    final = self._hook.finalialize_content(context, final) or final
+                return
+
+            # build assistant message from streamed tool calls
+            assistant_msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": last_response.content or None,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                        },
+                    }
+                    for tc in last_response.tool_calls
+                ],
+            }
+            messages.append(assistant_msg)
+
+            if self._hook:
+                await self._hook.before_execute_tools(context)
+
+            # execute tools (non-streamed)
+            tool_results: list[str] = []
+            tool_errors: list[str] = []
+            for tc in last_response.tool_calls:
+                args_preview = str(tc.arguments)[:200]
+                console.print(f"  [bold blue]CALL {tc.name}[/bold blue]({args_preview})")
+                result = await self._registry.execute(tc.name, tc.arguments)
+                result_preview = (result[:300].replace("\n", " ") if result else "(empty)")
+                try:
+                    print(f"    -> {result_preview}")
+                except UnicodeEncodeError:
+                    enc = sys.stdout.encoding or "utf-8"
+                    safe = result_preview.encode(enc, errors="replace").decode(enc, errors="replace")
+                    print(f"    -> {safe}")
+                tool_results.append(result)
+                if result.startswith("Error"):
+                    tool_errors.append(result)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
+                })
+
+            context.tool_results = tool_results
+            context.tool_errors = tool_errors
+
+            if self._hook:
+                await self._hook.after_iteration(context)
+
+        yield "Error: maximum tool iterations reached."
 
     async def run_interactive(self) -> None:
         """Run an interactive chat session."""
