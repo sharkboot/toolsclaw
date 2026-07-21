@@ -11,7 +11,7 @@ from rich.console import Console
 
 from toolsclaw.config import Config
 from toolsclaw.hook import AgentHook, AgentHookContext, CompositeHook
-from toolsclaw.provider import LLMProvider
+from toolsclaw.provider import LLMProvider, LLMResponse
 from toolsclaw.skills import (
     Skill,
     build_skills_summary,
@@ -173,102 +173,17 @@ class AgentRunner:
         parts.append(f"Workspace: {self._workspace}")
         return "\n\n".join(parts)
 
-    async def run(self, user_message: str) -> str:
-        """Run a single user message through the agent loop. Returns the final response."""
-        await self._ensure_deps()
-        self._last_run_usage.reset()
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self._build_system_prompt()},
-            {"role": "user", "content": user_message},
-        ]
-        tools = self._registry.get_definitions()
+    async def run(self, user_message: str, *, stream: bool = False) -> str | AsyncIterator[str]:
+        """Run a single user message through the agent loop.
 
-        for i in range(self._config.max_iterations):
-            context = AgentHookContext(iteration=i, messages=messages)
+        Args:
+            user_message: The user message to process.
+            stream: If True, yields incremental response content as an AsyncIterator[str].
+                    If False (default), waits for completion and returns the final string.
 
-            # before_iteration hook
-            if self._hook:
-                await self._hook.before_iteration(context)
-
-            response = await self._provider.chat(messages, tools)
-            u = response.usage
-            self._last_run_usage.add(u.prompt_tokens, u.completion_tokens, u.total_tokens)
-            context.response = response
-            context.tool_calls = list(response.tool_calls)
-
-            # no tool calls → final answer
-            if not response.has_tool_calls:
-                final = response.content
-                if self._hook:
-                    await self._hook.after_iteration(context)
-                    final = self._hook.finalize_content(context, final) or final
-                return final or "(Agent completed without generating a response.)"
-
-            # append assistant message with tool calls
-            assistant_msg: dict[str, Any] = {"role": "assistant", "content": response.content or None}
-            assistant_msg["tool_calls"] = [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.name,
-                        "arguments": json.dumps(tc.arguments, ensure_ascii=False),
-                    },
-                }
-                for tc in response.tool_calls
-            ]
-            messages.append(assistant_msg)
-
-            # before_execute_tools hook
-            if self._hook:
-                await self._hook.before_execute_tools(context)
-
-            # execute each tool call and append results
-            tool_results: list[str] = []
-            tool_errors: list[str] = []
-            for tc in response.tool_calls:
-                args_preview = str(tc.arguments)[:200]
-                console.print(f"  [bold blue]CALL {tc.name}[/bold blue]({args_preview})")
-                result = await self._registry.execute(tc.name, tc.arguments)
-                # use print() with errors='replace' to avoid encoding issues on Windows
-                result_preview = (result[:300].replace("\n", " ") if result else "(empty)")
-                try:
-                    print(f"    -> {result_preview}")
-                except UnicodeEncodeError:
-                    enc = sys.stdout.encoding or "utf-8"
-                    safe = result_preview.encode(enc, errors="replace").decode(enc, errors="replace")
-                    print(f"    -> {safe}")
-                tool_results.append(result)
-                if result.startswith("Error"):
-                    tool_errors.append(result)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result,
-                })
-
-            context.tool_results = tool_results
-            context.tool_errors = tool_errors
-
-            # after_iteration hook
-            if self._hook:
-                await self._hook.after_iteration(context)
-
-        return "Error: maximum tool iterations reached."
-
-    async def stream_run(self, user_message: str) -> AsyncIterator[str]:
-        """Stream a single user message, yielding incremental response content.
-
-        Yields the assistant's response content in real-time chunks.
-        Tool execution is still non-streamed (runs silently between chunks).
-
-        Usage::
-
-            async for chunk in runner.stream_run("Hello"):
-                print(chunk, end="", flush=True)
+        When stream=True, yields content chunks in real-time. Tool execution is still
+        non-streamed between chunks.
         """
-        from typing import AsyncIterator as AI
-
         await self._ensure_deps()
         self._last_run_usage.reset()
         messages: list[dict[str, Any]] = [
@@ -283,36 +198,34 @@ class AgentRunner:
             if self._hook:
                 await self._hook.before_iteration(context)
 
-            content_chunks: list[str] = []
-            async for chunk_resp in self._provider.stream_chat(messages, tools):
-                if chunk_resp.content:
-                    # only yield NEW content (difference from last chunk)
-                    new_content = chunk_resp.content[len("".join(content_chunks)):]
-                    if new_content:
-                        content_chunks.append(new_content)
-                        yield new_content
-                if chunk_resp.finish_reason:
-                    context.response = chunk_resp
+            if stream:
+                response: LLMResponse | None = None
+                content_parts: list[str] = []
 
-            # finalize usage
-            if context.response:
-                u = context.response.usage
-                self._last_run_usage.add(u.prompt_tokens, u.completion_tokens, u.total_tokens)
+                async for chunk_resp in self._provider.stream_chat(messages, tools):
+                    response = chunk_resp
+                    if chunk_resp.content:
+                        new = chunk_resp.content[len("".join(content_parts)):]
+                        if new:
+                            content_parts.append(new)
+                            yield new
+                    if chunk_resp.finish_reason:
+                        break
 
-            # check if we got tool calls in the last streamed response
-            last_response = context.response
-            if not last_response or not last_response.has_tool_calls:
-                final = last_response.content if last_response else ""
-                if self._hook:
-                    await self._hook.after_iteration(context)
-                    final = self._hook.finalialize_content(context, final) or final
-                return
+                if response:
+                    u = response.usage
+                    self._last_run_usage.add(u.prompt_tokens, u.completion_tokens, u.total_tokens)
+                    context.response = response
+                    context.tool_calls = list(response.tool_calls)
 
-            # build assistant message from streamed tool calls
-            assistant_msg: dict[str, Any] = {
-                "role": "assistant",
-                "content": last_response.content or None,
-                "tool_calls": [
+                if not response or not response.has_tool_calls:
+                    if self._hook:
+                        await self._hook.after_iteration(context)
+                        self._hook.finalize_content(context, response.content if response else "")  # noqa: F841
+                    return  # type: ignore[return-value]
+
+                assistant_msg: dict[str, Any] = {"role": "assistant", "content": response.content or None}
+                assistant_msg["tool_calls"] = [
                     {
                         "id": tc.id,
                         "type": "function",
@@ -321,18 +234,43 @@ class AgentRunner:
                             "arguments": json.dumps(tc.arguments, ensure_ascii=False),
                         },
                     }
-                    for tc in last_response.tool_calls
-                ],
-            }
-            messages.append(assistant_msg)
+                    for tc in response.tool_calls
+                ]
+                messages.append(assistant_msg)
+            else:
+                response = await self._provider.chat(messages, tools)
+                u = response.usage
+                self._last_run_usage.add(u.prompt_tokens, u.completion_tokens, u.total_tokens)
+                context.response = response
+                context.tool_calls = list(response.tool_calls)
+
+                if not response.has_tool_calls:
+                    final = response.content
+                    if self._hook:
+                        await self._hook.after_iteration(context)
+                        final = self._hook.finalize_content(context, final) or final
+                    return final or "(Agent completed without generating a response.)"
+
+                assistant_msg: dict[str, Any] = {"role": "assistant", "content": response.content or None}
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                        },
+                    }
+                    for tc in response.tool_calls
+                ]
+                messages.append(assistant_msg)
 
             if self._hook:
                 await self._hook.before_execute_tools(context)
 
-            # execute tools (non-streamed)
             tool_results: list[str] = []
             tool_errors: list[str] = []
-            for tc in last_response.tool_calls:
+            for tc in context.tool_calls:
                 args_preview = str(tc.arguments)[:200]
                 console.print(f"  [bold blue]CALL {tc.name}[/bold blue]({args_preview})")
                 result = await self._registry.execute(tc.name, tc.arguments)
@@ -358,7 +296,9 @@ class AgentRunner:
             if self._hook:
                 await self._hook.after_iteration(context)
 
-        yield "Error: maximum tool iterations reached."
+        if stream:
+            yield "Error: maximum tool iterations reached."
+        return "Error: maximum tool iterations reached."
 
     async def run_interactive(self) -> None:
         """Run an interactive chat session."""

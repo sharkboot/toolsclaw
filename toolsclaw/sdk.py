@@ -201,7 +201,7 @@ class ToolsClaw:
 
         Usage::
 
-            async for chunk in agent.stream_run("Hello"):
+            async for chunk in agent.run("Hello", stream=True):
                 print(chunk, end="", flush=True)
         """
         capture = SDKCaptureHook()
@@ -217,7 +217,7 @@ class ToolsClaw:
         prev_hook = self._runner._hook
         self._runner._hook = composite
         try:
-            async for chunk in self._runner.stream_run(message):
+            async for chunk in self._runner.run(message, stream=True):  # type: ignore[arg-type]
                 yield chunk
         finally:
             self._runner._hook = prev_hook
