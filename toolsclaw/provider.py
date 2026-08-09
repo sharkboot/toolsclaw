@@ -233,6 +233,59 @@ class Conversation:
                 return
         self._messages.insert(0, {"role": "system", "content": content})
 
+    async def compress(
+        self,
+        strategy: str = "hybrid",
+        threshold_tokens: int = 80_000,
+        target_ratio: float = 0.5,
+        min_rounds_to_keep: int = 3,
+    ) -> bool:
+        """Compress the conversation history if it exceeds the threshold.
+
+        Uses the internal LLM provider for summarization when needed.
+
+        Args:
+            strategy: Compression strategy ("truncate", "drop", "summarize", "hybrid").
+            threshold_tokens: Trigger compression above this many tokens.
+            target_ratio: Target ratio of original size after compression.
+            min_rounds_to_keep: Minimum number of recent rounds to keep.
+
+        Returns:
+            True if compression was performed, False otherwise.
+        """
+        # Late import to avoid circular dependency
+        from toolsclaw.memory import MemoryCompressor, estimate_messages_tokens
+
+        est = estimate_messages_tokens(self._messages)
+        if est <= threshold_tokens:
+            return False
+
+        compressor = MemoryCompressor(
+            summarize_func=self._make_summarizer(),
+        )
+        self._messages = await compressor.compress(
+            self._messages,
+            strategy=strategy,
+            target_ratio=target_ratio,
+            min_rounds_to_keep=min_rounds_to_keep,
+        )
+        return True
+
+    def _make_summarizer(self):
+        """Return an async callable wrapping the LLM provider."""
+
+        async def _summarize(prompt: str) -> str:
+            msgs = [
+                {"role": "system", "content": "You are a concise summarizer. "
+                 "Summarize the conversation preserving key facts, decisions, "
+                 "file paths, and the original language. Keep it brief."},
+                {"role": "user", "content": prompt},
+            ]
+            resp = await self._provider.chat(msgs, tools=None)
+            return resp.content or "(summary unavailable)"
+
+        return _summarize
+
     async def send(
         self,
         message: str,
